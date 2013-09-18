@@ -41,10 +41,25 @@ let () =
           | S l -> List.fold_left get_pkg acc l
           | _ -> acc in
       get_pkg ([],[]) flag in
-    let predicates_mod = List.map (fun x -> "pkg_"^x) pkgs in
-    let all_predicates : string list = "javascript" :: predicates @ predicates_mod in
-    let all_pkgs : string list = "js_of_ocaml" :: pkgs in
+    
 
+    (* Findlib usualy set pkg_* predicate for all selected packages *)
+    (* It doesn't do it with 'query' command, we have to it manualy. *)
+    let all_pkgs : string list = "js_of_ocaml" :: pkgs in
+    let cmd = Printf.sprintf "ocamlfind query -format \"pkg_%%p\" -r %s" (String.concat " " all_pkgs) in
+    let predicates_pkgs = Pack.My_unix.run_and_open cmd (fun ic ->
+      let l = ref [] in
+      begin
+        try
+          while true do
+            l:= input_line ic :: !l;
+          done
+        with _ -> ()
+      end;
+      !l) in
+
+
+    let all_predicates : string list = "javascript" :: predicates @ predicates_pkgs in
 
     (* query findlib for linking option *)
     let cmd = Printf.sprintf
