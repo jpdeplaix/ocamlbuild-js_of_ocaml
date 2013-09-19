@@ -27,8 +27,18 @@ let fold f =
   (try while true do l @:= [f ()] done with _ -> ());
   !l
 
+let split_comma s =
+  let rec aux acc final_acc = function
+    | ','::xs -> aux [] (final_acc @ [String.implode acc]) xs
+    | x::xs -> aux (acc @ [x]) final_acc xs
+    | [] -> final_acc @ [String.implode acc]
+  in
+  aux [] [] (String.explode s)
+
 let fold_pflag scan =
-  List.fold_left (fun acc x -> try scan x (fun x -> x) :: acc with _ -> acc) []
+  List.fold_left
+    (fun acc x -> try split_comma (scan x (fun x -> x)) @ acc with _ -> acc)
+    []
 
 let ocamlfind cmd f =
   let p = Printf.sprintf in
