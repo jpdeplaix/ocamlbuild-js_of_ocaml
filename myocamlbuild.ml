@@ -22,72 +22,51 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 open Ocamlbuild_plugin
 module Pack = Ocamlbuild_pack
 
+let fold f =
+  let l = ref [] in
+  (try while true do l @:= [f ()] done with _ -> ());
+  !l
+
+let fold_pflag scan =
+  List.fold_left (fun acc x -> try scan x (fun x -> x) :: acc with _ -> acc) []
+
+let ocamlfind cmd f =
+  let p = Printf.sprintf in
+  let cmd = List.map (p "\"%s\"") cmd in
+  let cmd = p "ocamlfind query %s" (String.concat " " cmd) in
+  Pack.My_unix.run_and_open cmd (fun ic -> fold (fun () -> f ic))
+
+let link_opts prod =
+    let (all_pkgs, predicates) =
+      let tags = Tags.elements (tags_of_pathname prod) in
+      let pkgs = fold_pflag (fun x -> Scanf.sscanf x "package(%[^)])") tags in
+      let predicates = fold_pflag (fun x -> Scanf.sscanf x "predicate(%[^)])") tags in
+      ("js_of_ocaml" :: pkgs, predicates)
+    in
+
+    (* Findlib usualy set pkg_* predicate for all selected packages *)
+    (* It doesn't do it with 'query' command, we have to it manualy. *)
+    let cmd = "-format" :: "pkg_%p" :: "-r" :: all_pkgs in
+    let predicates_pkgs = ocamlfind cmd (fun ic -> input_line ic) in
+
+    let all_predicates = String.concat "," ("javascript" :: predicates @ predicates_pkgs) in
+
+    (* query findlib for linking option *)
+    let cmd = "-o-format" :: "-r" :: "-predicates" :: all_predicates :: all_pkgs in
+    ocamlfind cmd (fun ic -> A (input_line ic))
+
 let () =
   let dep = "%.byte" in
   let prod = "%.js" in
   let f env _ =
     let dep = env dep in
     let prod = env prod in
-
-
-    (* compute packages and predicates *)
-    let pkgs,predicates =
-      let tags = tags_of_pathname dep ++ "javascript" in
-      let flag = Pack.Flags.of_tags tags in
-      let rec get_pkg ((pkgs,predi) as acc) l =
-        match l with
-          | S [A "-package" ; A pkg ] -> (pkg::pkgs,predi)
-          | S [A "-predicates" ; A p ] -> (pkgs,p::predi)
-          | S l -> List.fold_left get_pkg acc l
-          | _ -> acc in
-      get_pkg ([],[]) flag in
-    
-
-    (* Findlib usualy set pkg_* predicate for all selected packages *)
-    (* It doesn't do it with 'query' command, we have to it manualy. *)
-    let all_pkgs : string list = "js_of_ocaml" :: pkgs in
-    let cmd = Printf.sprintf "ocamlfind query -format \"pkg_%%p\" -r %s" (String.concat " " all_pkgs) in
-    let predicates_pkgs = Pack.My_unix.run_and_open cmd (fun ic ->
-      let l = ref [] in
-      begin
-        try
-          while true do
-            l:= input_line ic :: !l;
-          done
-        with _ -> ()
-      end;
-      !l) in
-
-
-    let all_predicates : string list = "javascript" :: predicates @ predicates_pkgs in
-
-    (* query findlib for linking option *)
-    let cmd = Printf.sprintf
-      "ocamlfind query -o-format -r -predicates %S %s"
-      (String.concat "," all_predicates)
-      (String.concat " " all_pkgs) in
-    let link_opt = Pack.My_unix.run_and_open cmd (fun ic ->
-      let l = ref [] in
-      begin
-        try
-          while true do
-            l:= A (input_line ic) :: !l;
-          done
-        with _ -> ()
-      end;
-      S !l) in
-
-    (* regular computation of tags *)
+    let link_opts = link_opts prod in
     let tags = tags_of_pathname dep ++ "js_of_ocaml" in
-    Cmd (S [A "js_of_ocaml"; T tags; link_opt ; P dep; A "-o"; Px prod])
+    Cmd (S [A "js_of_ocaml"; T tags; S link_opts; P dep; A "-o"; Px prod])
   in
   rule "js_of_ocaml: .byte -> .js" ~dep ~prod f
 
 let () =
-  List.iter ( fun tags ->
-    pflag tags "package" (fun pkg -> S [A "-package"; A pkg]);
-    pflag tags "predicate" (fun pkg -> S [A "-predicates"; A pkg]);
-  ) [ [ "javascript" ] ];
-  
   flag ["js_of_ocaml"; "debug"] (S [A "-pretty"; A "-debuginfo"; A "-noinline"]);
   pflag ["js_of_ocaml"] "opt" (fun n -> S [A "-opt"; A n])
